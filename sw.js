@@ -1,4 +1,4 @@
-var CACHE = 'syllabuzz-v9';
+var CACHE = 'syllabuzz-v10';
 var FILES = [
   './',
   'index.html',
