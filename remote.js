@@ -206,6 +206,7 @@ function nextPopup() {
 /* ---------- settings rows + panels ---------- */
 const unread = () => inbox.filter(m => !m.read).length;
 const noticeCount = () => unread() + visible().filter(a => !seen()[a.id]).length;
+window.sbNoticeCount = noticeCount;
 function row(icon, title, sub, fn) {
   return '<button class="g sr" onclick="' + fn + '"><span class="si">' + ic(icon) + '</span><span class="sx"><b>' + title + '</b><small>' + sub + '</small></span>' + ic('right', 'ch') + '</button>';
 }
@@ -301,6 +302,7 @@ function refreshUi() {
   rTimer = setTimeout(() => {
     applyFlags(); checkGates(); drawBanners(); nextPopup(); if (panel === 'notices' || panel === 'resources') draw();
     const sig = [noticeCount(), content.length, JSON.stringify(flags), (cfgApp.support || {}).email].join('|');
+    try { if (window.updNtBadge) window.updNtBadge() } catch (e) {}
     if (sig !== lastSig) { lastSig = sig; rerender() }      /* only redraw Settings when its rows changed */
   }, 120);
 }

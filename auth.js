@@ -12,7 +12,13 @@ const FB = CFG.firebase || {};
 const VER = '3.2';
 window.SB_VER = VER;
 const APP = !!window.AndroidBridge;
-const SYNC = ['tt', 'tth', 'tta', 'ttsem', 'tas', 'ttl', 'ttk', 'ttf', 'tsh'];
+/* personal settings: applied in place, never worth reloading the page for */
+const SOFT = ['ttf', 'ttk', 'ttour', 'ttn', 'ttip'];
+const softDone = () => { try { if (window.sbSoft) window.sbSoft() } catch (e) {} };
+/* same data written in a different key order or spacing is not a difference */
+const canon = v => { try { const f = x => Array.isArray(x) ? x.map(f) : x && typeof x === 'object' ? Object.keys(x).sort().reduce((o, k) => (o[k] = f(x[k]), o), {}) : x; return JSON.stringify(f(JSON.parse(v))) } catch (e) { return v } };
+const sameVal = (a, b) => a === b || (typeof a === 'string' && typeof b === 'string' && canon(a) === canon(b));
+const SYNC = ['tt', 'tth', 'tta', 'ttsem', 'tas', 'ttl', 'ttk', 'ttf', 'tsh', 'ttour', 'ttn', 'ttip'];
 const CDN = 'https://www.gstatic.com/firebasejs/10.14.1/';
 const LS = localStorage;
 const _set = Storage.prototype.setItem, _rm = Storage.prototype.removeItem;
@@ -312,7 +318,8 @@ async function logout() {
   try {
     await flush();
     await Promise.race([F.waitForPendingWrites(db), new Promise((_, j) => setTimeout(j, 6000))]);
-  } catch (e) { if (!confirm('Some changes have not been uploaded yet. Log out anyway and lose them?')) return }
+    if (dirty.size || (!reconciled && lget('tt'))) throw new Error('not synced');
+  } catch (e) { if (!confirm('Your latest data has not finished saving to your account. Log out anyway and lose it?')) return }
   await wipe(); location.reload();
 }
 async function wipe() {
@@ -357,10 +364,18 @@ async function flush() {
   try {
     await b.commit();
     keys.forEach(k => { if (lget(k) === sent[k]) dirty.delete(k) }); saveDirty(); setStatus('ok');
-  } catch (e) { setStatus(navigator.onLine ? 'error' : 'offline') }
+  } catch (e) { setStatus(navigator.onLine ? 'error' : 'offline'); clearTimeout(flushT); flushT = setTimeout(flush, 8000) }
 }
+addEventListener('online', () => flush());
+document.addEventListener('visibilitychange', () => { if (document.hidden) flush() });
+addEventListener('pagehide', () => flush());
 function startData(u) {
   let first = true;
+  /* if the first snapshot never arrives, fetch the account data directly so login never looks empty */
+  setTimeout(async () => {
+    if (reconciled || !user || user.uid !== u.uid) return;
+    try { const snap = await F.getDocs(F.collection(db, 'users', u.uid, 'data')); if (!reconciled && first) { first = false; reconcile(u, snap) } } catch (e) {}
+  }, 7000);
   unsubData = F.onSnapshot(F.collection(db, 'users', u.uid, 'data'), { includeMetadataChanges: true }, snap => {
     if (first) { if (snap.metadata.fromCache && navigator.onLine) return; first = false; reconcile(u, snap); return }
     const ch = [];
@@ -374,36 +389,47 @@ function reconcile(u, snap) {
   const cKeys = Object.keys(cloud).filter(k => SYNC.indexOf(k) >= 0);
   const lKeys = SYNC.filter(k => lget(k) !== null);
   const owned = lget('sb_owner') === u.uid;
-  let changed = false, useCloud = true;
+  let changed = false, softChanged = false, useCloud = true;
   if (!owned && cKeys.length && lKeys.length) {
-    const differs = lKeys.some(k => cloud[k] !== lget(k)) || cKeys.some(k => lget(k) === null);
-    if (differs) useCloud = confirm('This device already has timetable data, and your account has data saved too.\n\nOK: replace this device’s data with your account’s data.\nCancel: upload this device’s data to your account instead.');
+    /* The account's saved data always wins, with no question asked. A copy of what this device had
+       is kept once (sb_prev_local) so nothing is ever lost for good. */
+    const differs = lKeys.some(k => !sameVal(cloud[k], lget(k))) || cKeys.some(k => lget(k) === null);
+    if (differs) {
+      try { const prev = {}; lKeys.forEach(k => { prev[k] = lget(k) }); localStorage.setItem('sb_prev_local', JSON.stringify({ at: Date.now(), data: prev })) } catch (e) {}
+      useCloud = true;
+    }
   }
   SYNC.forEach(k => {
     const c = cloud[k], l = lget(k);
     if (!owned && !useCloud) { if (l !== null) { if (c !== l) dirty.add(k) } else if (c !== undefined) dirty.add(k) /* removes it from cloud */; return }
     if (owned && dirty.has(k)) return;                       /* local edits made while offline win */
-    if (c !== undefined) { if (c !== l) { put(k, c); changed = true } }
-    else if (l !== null) { if (owned) { put(k, null); changed = true } else dirty.add(k) } /* first sign-in: upload */
+    const soft = SOFT.indexOf(k) >= 0;
+    if (c !== undefined) { if (!sameVal(c, l)) { put(k, c); if (soft) softChanged = true; else changed = true } }
+    else if (l !== null) { if (owned && !soft) { put(k, null); changed = true } else dirty.add(k) } /* first sign-in: upload; settings missing in the cloud are uploaded, not deleted */
   });
+  /* someone who already has saved data is not new: never replay the intro tour for them */
+  if (cKeys.length && lget('ttour') === null) { put('ttour', '1'); dirty.add('ttour'); softChanged = true; try { const t = document.getElementById('tr'); if (t && !t.hidden && window.tourEnd) window.tourEnd() } catch (e) {} }
   lput('sb_owner', u.uid); saveDirty(); reconciled = true;
-  if (dirty.size) flush(); else setStatus('ok');
-  if (changed) refresh();
+  /* finish uploading first, so a reload can never cut a save short */
+  (dirty.size ? flush() : Promise.resolve(setStatus('ok'))).then(() => { if (changed) refresh(); else if (softChanged) softDone() });
 }
 function apply(changes) {
-  let changed = false;
+  let changed = false, soft = false;
   changes.forEach(c => {
     const k = c.doc.id; if (SYNC.indexOf(k) < 0 || dirty.has(k)) return;
     const v = c.type === 'removed' ? null : c.doc.data().v;
     if (typeof v !== 'string' && v !== null) return;
-    if (v !== lget(k)) { put(k, v); changed = true }
+    if (!sameVal(v, lget(k))) { put(k, v); if (SOFT.indexOf(k) >= 0) soft = true; else changed = true }
   });
+  if (soft && !changed) softDone();
   if (changed) { lastSync = Date.now(); refresh() }
 }
 let tries = 0;
 /* Pulls fresh cloud data into the page. Reloads are rationed: at most 2 per 10 minutes, so a data
    disagreement can never turn into an endless reload loop. */
+let reloading = false;
 function refresh() {
+  if (reloading) return;                                 /* several triggers can fire together: reload once */
   const busyUi = document.querySelector('dialog[open]') || (document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName));
   if (busyUi && tries++ < 30) return setTimeout(refresh, 4000);
   tries = 0;
@@ -412,7 +438,7 @@ function refresh() {
   if (log.length >= 2) return;
   log.push(now); try { sessionStorage.setItem('sb_rl', JSON.stringify(log)) } catch (e) {}
   try { if (window.doSync) window.doSync() } catch (e) {}
-  location.reload();
+  reloading = true; location.reload();
 }
 
 /* ---- auth state ---- */
