@@ -13,12 +13,12 @@ const VER = '3.2';
 window.SB_VER = VER;
 const APP = !!window.AndroidBridge;
 /* personal settings: applied in place, never worth reloading the page for */
-const SOFT = ['ttf', 'ttk', 'ttour', 'ttn', 'ttip'];
+const SOFT = ['ttf', 'ttk', 'ttour', 'ttn', 'ttip', 'tai'];
 const softDone = () => { try { if (window.sbSoft) window.sbSoft() } catch (e) {} };
 /* same data written in a different key order or spacing is not a difference */
 const canon = v => { try { const f = x => Array.isArray(x) ? x.map(f) : x && typeof x === 'object' ? Object.keys(x).sort().reduce((o, k) => (o[k] = f(x[k]), o), {}) : x; return JSON.stringify(f(JSON.parse(v))) } catch (e) { return v } };
 const sameVal = (a, b) => a === b || (typeof a === 'string' && typeof b === 'string' && canon(a) === canon(b));
-const SYNC = ['tt', 'tth', 'tta', 'ttsem', 'tas', 'ttl', 'ttk', 'ttf', 'tsh', 'ttour', 'ttn', 'ttip'];
+const SYNC = ['tt', 'tth', 'tta', 'ttsem', 'tas', 'ttl', 'ttk', 'ttf', 'tsh', 'ttour', 'ttn', 'ttip', 'tai'];
 const CDN = 'https://www.gstatic.com/firebasejs/10.14.1/';
 const LS = localStorage;
 const _set = Storage.prototype.setItem, _rm = Storage.prototype.removeItem;
